@@ -22,7 +22,7 @@ S_cutoff <- quantile(S, .5)
 filter_volcano(d, p, S, n1, n2, alpha = .01, S_cutoff)
 
 # filter
-f2 <- ttest(exprs_set$survival, p=0.05) #73 genes
+f2 <- ttest(exprs_set$survival, p=0.01) #73 genes
 ffun <- filterfun(f2)
 selected <- genefilter(exprs(exprs_set), ffun)
 selected <- names(selected[selected])
@@ -47,13 +47,23 @@ X.train <- data_scaled[rownames(data_scaled) %in% rownames(X.train),
                        colnames(data_scaled) %in% colnames(X.train)]
 
 #set.seed(42)
-rf_sa <- safs(x = data.frame(X.train, Z.train), y = Y.train,
-              iters = 500,
-              safsControl = safsControl(functions = rfSA,
+# rf_sa <- safs(x = data.frame(X.train, Z.train[,-3]), y = Y.train,
+#               iters = 500,
+#               safsControl = safsControl(functions = rfSA,
+#                                         method = "repeatedcv",
+#                                         repeats = 5,
+#                                         improve = 50))
+# rf_sa
+# rf_sa$optVariables #not improving much
+# saveRDS(rf_sa, "./rf_sa.rds")
+# rf_sa <- readRDS("./rf_sa.rds")
+
+rf_ga <- gafs(x = data.frame(X.train, Z.train[,-3]), y = Y.train,
+              iters = 600,
+              gafsControl = gafsControl(functions = rfGA,
                                         method = "repeatedcv",
-                                        repeats = 5,
-                                        improve = 50))
-rf_sa
+                                        repeats = 5))
+rf_ga
 
 # performance
 Z.train$performance_score <- factor(Z.train$performance_score)
@@ -89,6 +99,7 @@ combined_datasets <- data.frame(X.train, Z.train)
 combined_datasets$survival <- Y.train
 #combined_datasets <-combined_datasets[,-which("performance_score" == colnames(combined_datasets))]
 combined_datasets <- combined_datasets[complete.cases(combined_datasets),]
+combined_datasets <- combined_datasets[, colnames(combined_datasets) %in% c(rf_sa$optVariables, "survival")]
 survival_col <- which("survival" == colnames(combined_datasets))
 
 # Classifiers 
