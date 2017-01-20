@@ -31,6 +31,7 @@ X.train <- X.train[, colnames(X.train) %in% selected]
 X.test <- X.test[, colnames(X.test) %in% selected]
 
 combined_datasets <- data.frame(X.train, Y.train)
+library(ggplot2)
 ggplot(combined_datasets, aes(Y.train, mRNA_RESP18, fill = Y.train)) + geom_boxplot()
 
 # Scale microarray values #z-score vs min-max vs Generalized Logistic scaling
@@ -58,12 +59,12 @@ X.train <- data_scaled[rownames(data_scaled) %in% rownames(X.train),
 # saveRDS(rf_sa, "./rf_sa.rds")
 # rf_sa <- readRDS("./rf_sa.rds")
 
-rf_ga <- gafs(x = data.frame(X.train, Z.train[,-3]), y = Y.train,
-              iters = 600,
-              gafsControl = gafsControl(functions = rfGA,
-                                        method = "repeatedcv",
-                                        repeats = 5))
-rf_ga
+# rf_ga <- gafs(x = data.frame(X.train, Z.train[,-3]), y = Y.train,
+#               iters = 600,
+#               gafsControl = gafsControl(functions = rfGA,
+#                                         method = "repeatedcv",
+#                                         repeats = 5))
+# rf_ga
 
 # performance
 Z.train$performance_score <- factor(Z.train$performance_score)
@@ -76,6 +77,8 @@ combined_datasets <- data.frame(rbind(X.train, X.test),
 perf_col <- which("performance_score" == colnames(combined_datasets))
 train_set <- combined_datasets[complete.cases(combined_datasets), -perf_col]
 pred_me <- combined_datasets[complete.cases(combined_datasets), perf_col]
+
+library(caret)
 model <- train(train_set,
                pred_me,
                method = "gbm",
@@ -99,21 +102,21 @@ combined_datasets <- data.frame(X.train, Z.train)
 combined_datasets$survival <- Y.train
 #combined_datasets <-combined_datasets[,-which("performance_score" == colnames(combined_datasets))]
 combined_datasets <- combined_datasets[complete.cases(combined_datasets),]
-combined_datasets <- combined_datasets[, colnames(combined_datasets) %in% c(rf_sa$optVariables, "survival")]
+#combined_datasets <- combined_datasets[, colnames(combined_datasets) %in% c(rf_sa$optVariables, "survival")]
 survival_col <- which("survival" == colnames(combined_datasets))
 
 # Classifiers 
-library(caret)
-
-# todo divide dataset
 x = combined_datasets[,-survival_col]
 y = combined_datasets[,survival_col]
+grid <- expand.grid(C=c(0.10,0.15,0.25,0.35, 0.45, 0.5, 0.55, 0.6), 
+                    sigma=c(0.005, 0.0055, 0.006, 0.0065, 0.007))
 model <- train(x,
                y,
                method = "svmRadial",
                metric = "ROC",
                family = binomial,
-               tuneLength = 5,
+               #tuneLength = 5,
+               tuneGrid = grid,
                trControl = trainControl(method = "repeatedcv",
                                         number = 10,
                                         repeats = 4,
@@ -123,13 +126,47 @@ model <- train(x,
                strata = y,
                sampsize = rep(40, 2))
 model
-
-#test_classes <- predict(model, newdata = [, -survival_col])
-#CV <- c(CV, confusionMatrix(data = test_classes, test_set$survival))
+#C = 0.5
+#sigma = 0.006
 
 # Final Train Predict
-# Train
-RF_model <- trainFun(combined_datasets[, -survival_col], combined_datasets[, survival_col], trCtrl)
+model <- train(x,
+               y,
+               method = "svmRadial",
+               metric = "ROC",
+               family = binomial,
+               tuneGrid =expand.grid(C = 0.5, sigma=0.006),
+               trControl = trainControl(method = "none",
+                                        classProbs = TRUE,
+                                        summaryFunction = twoClassSummary),
+               preProc = c("center", "scale"),
+               strata = y,
+               sampsize = rep(40, 2))
+
+# Final Predict
+levels(Z.test$performance_score) <- c(40, 60, 80, 100)
+Z.test$performance_score <- as.numeric(as.character(Z.test$performance_score))
+dmy <- dummyVars(" ~ .", data = Z.test)
+Z.test <- data.frame(predict(dmy, newdata = Z.test))
+predictions <- predict(model, data.frame(X.test, Z.test))
+final <- data.frame(final_results = predictions)
+rownames(final) <- rownames(X.test)
+write.csv(final, "final_results.csv", row.names = T)
+
+library(pROC)
+probsTrain <- predict(model, x, type = "prob")
+rocCurve   <- roc(response = y,
+                  predictor = probsTrain[, "D"],
+                  levels = rev(levels(y)))
+plot(rocCurve, print.thres = "best")
+
+# best threshold 
+probsTest <- predict(model, x, type = "prob")
+threshold <- 0.768
+pred <- factor(ifelse(probsTest[, "D"] > threshold, "D", "A"))
+pred <- relevel(pred, "D")   # you may or may not need this; I did
+confusionMatrix(pred, y)
+
 # Predict
 combined_test <- cbind(X.test, Z.test[,-which("performance_score" == colnames(Z.test))])
 predictions <- predict(RF_model, newdata =  combined_test, type = "prob")
